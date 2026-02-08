@@ -1,6 +1,7 @@
 # Guia de Montagem: Relatório Final TEP-Sentinel
 
 Este documento serve como um **roteiro** para você montar sua apresentação ou relatório final. Ele organiza os textos já criados e sugere onde encaixar as imagens que geramos.
+Tudo esta no arquivo pdf anexado
 
 ---
 
