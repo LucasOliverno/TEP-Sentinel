@@ -21,8 +21,8 @@
 
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/yourusername/tep-sentinel.git
-    cd tep-sentinel
+    git clone https://github.com/LucasOliverno/TEP-Sentinel.git
+    cd TEP-Sentinel
     ```
 
 2.  **Install Dependencies:**
