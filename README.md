@@ -59,6 +59,3 @@ python launch_dashboard.py
 *   `rag_agent.py`: LangChain RAG implementation.
 *   `Banco de Conhecimento/`: Markdown files for RAG knowledge base.
 
-## 📄 License
-
-MIT License.
