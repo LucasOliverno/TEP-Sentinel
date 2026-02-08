@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arquitetura TEP-Sentinel</title>
+
+    <!-- Mermaid JS -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent-color: #38bdf8;
+            --card-bg: rgba(30, 41, 59, 0.95);
+            --card-border: 1px solid rgba(148, 163, 184, 0.2);
+            --glass-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-primary);
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Scanline Effect - Subtle Overlay */
+        body::before {
+            content: " ";
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            z-index: 2;
+            background-size: 100% 2px, 3px 100%;
+            pointer-events: none;
+        }
+
+        header {
+            width: 100%;
+            padding: 40px 0;
+            text-align: center;
+            background: rgba(15, 23, 42, 0.9);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        h1 {
+            color: var(--accent-color);
+            margin: 0;
+            font-size: 2.5em;
+            letter-spacing: -0.05em;
+            text-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+        }
+
+        p.subtitle {
+            color: var(--text-secondary);
+            margin-top: 10px;
+            font-size: 1.1em;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 1200px;
+            padding: 40px 20px;
+            z-index: 1;
+        }
+
+        h2 {
+            border-left: 4px solid var(--accent-color);
+            padding-left: 15px;
+            margin-top: 60px;
+            margin-bottom: 30px;
+            font-size: 1.5em;
+            color: var(--text-primary);
+        }
+
+        /* Diagram Section */
+        .diagram-wrapper {
+            background: #0f172a;
+            border: var(--card-border);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: var(--glass-shadow);
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+        }
+
+        .mermaid {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+        }
+
+        .mermaid svg {
+            max-width: 100% !important;
+            height: auto !important;
+        }
+
+        /* Module Grid */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: var(--card-border);
+            border-radius: 12px;
+            padding: 25px;
+            transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            position: relative;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--accent-color);
+            border-radius: 4px 0 0 4px;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            border-color: rgba(56, 189, 248, 0.4);
+        }
+
+        .card:hover::before {
+            opacity: 1;
+        }
+
+        .card h3 {
+            margin-top: 5px;
+            font-size: 1.25em;
+            color: #fff;
+        }
+
+        .card p {
+            color: var(--text-secondary);
+            line-height: 1.6;
+            font-size: 0.95em;
+        }
+
+        .card code {
+            display: block;
+            margin-top: 15px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.85em;
+            color: #e2e8f0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Tags */
+        .tag {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.7em;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #fff;
+            margin-bottom: 10px;
+        }
+
+        .env {
+            background: #0d9488;
+        }
+
+        .fdd {
+            background: #0891b2;
+        }
+
+        .rl {
+            background: #7c3aed;
+        }
+
+        .rag {
+            background: #dc2626;
+        }
+
+        .int {
+            background: #4b5563;
+        }
+
+        footer {
+            margin-top: 60px;
+            padding: 40px;
+            text-align: center;
+            color: var(--text-secondary);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            width: 100%;
+            background: rgba(15, 23, 42, 0.9);
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>TEP-Sentinel</h1>
+        <p class="subtitle">Intelligent Control & Diagnostic System</p>
+    </header>
+
+    <div class="container">
+
+        <h2>Arquitetura do Sistema</h2>
+        <div class="diagram-wrapper">
+            <div class="mermaid">
+                %%{init: {
+                'theme': 'dark',
+                'themeVariables': {
+                'fontFamily': 'Inter',
+                'primaryColor': '#1e293b',
+                'primaryTextColor': '#e2e8f0',
+                'primaryBorderColor': '#38bdf8',
+                'lineColor': '#94a3b8',
+                'secondaryColor': '#0f172a',
+                'tertiaryColor': '#1e293b'
+                },
+                'flowchart': {
+                'useMaxWidth': true,
+                'htmlLabels': true,
+                'curve': 'basis'
+                }
+                }}%%
+                flowchart TD
+                subgraph EnvScope [Ambiente & Simulação]
+                Env[TEPEnv Gym]
+                Surrogate[Surrogate Model LSTM]
+                Env -->|Estado S_t| SystemNode
+                SystemNode -->|Ação A_t| Env
+                Env -.-> Surrogate
+                end
+
+                subgraph SysScope [Orquestrador]
+                SystemNode[tep_system.py]
+                Buffer[Rolling Buffer T=100]
+                SystemNode --> Buffer
+                end
+
+                subgraph BrainScope [FDD - Cérebro Analítico]
+                AE[Autoencoder]
+                Classifier[CNN-LSTM Classifier]
+                Buffer --> AE
+                AE -->|MSE > Threshold| Alert{Alerta?}
+                Alert -->|Sim| Classifier
+                Alert -->|Não| Normal[Status: Normal]
+                Classifier -->|Fault Code| RAG_Trigger
+                end
+
+                subgraph ControlScope [RL - Piloto Automático]
+                RL_Agent[Agente PPO]
+                Buffer --> RL_Agent
+                RL_Agent -->|Ação Otimizada| SystemNode
+                end
+
+                subgraph ExplainScope [RAG - IA Generativa]
+                RAG_Trigger --> RAG_Agent[Agente RAG]
+                KB[(ChromaDB)]
+                Gemini[Google Gemini 2.0]
+
+                RAG_Agent -->|Busca Semântica| KB
+                KB -->|Contexto Técnico| RAG_Agent
+                RAG_Agent -->|Prompt + Contexto| Gemini
+                Gemini -->|Relatório Explicativo| UI_Report
+                end
+
+                subgraph InterfaceScope [Dashboard do Operador]
+                UI[dashboard.py Streamlit]
+                SystemNode -->|Variáveis & Estado| UI
+                UI_Report -->|Diagnóstico| UI
+                User((Operador)) -->|Injeção de Falhas| UI
+                end
+
+                %% Styling
+                classDef env fill:#134e4a,stroke:#2dd4bf,stroke-width:2px,color:#fff
+                classDef fdd fill:#155e75,stroke:#22d3ee,stroke-width:2px,color:#fff
+                classDef rl fill:#5b21b6,stroke:#a78bfa,stroke-width:2px,color:#fff
+                classDef rag fill:#991b1b,stroke:#f87171,stroke-width:2px,color:#fff
+                classDef sys fill:#1f2937,stroke:#94a3b8,stroke-width:2px,color:#fff,stroke-dasharray: 5 5
+
+                class Env,Surrogate env
+                class AE,Classifier fdd
+                class RL_Agent rl
+                class RAG_Agent,KB,Gemini rag
+                class SystemNode,Buffer sys
+                class UI,UI_Report sys
+            </div>
+        </div>
+
+        <h2>Módulos & Componentes</h2>
+        <div class="grid">
+
+            <div class="card">
+                <span class="tag env">Ambiente Digital</span>
+                <h3>Simulação TEP</h3>
+                <p>Digital Twin da planta química Tennessee Eastman. Utiliza um modelo neural (LSTM) treinado em dados
+                    históricos para simular a física do processo em tempo real.</p>
+                <code>envs/tep_env.py</code>
+            </div>
+
+            <div class="card">
+                <span class="tag fdd">Detecção (FDD)</span>
+                <h3>Monitoramento Inteligente</h3>
+                <p>Rede neural <strong>Autoencoder</strong> que aprende o comportamento normal da planta. Detecta
+                    anomalias sutis (desvios de MSE) e aciona o classificador CNN-LSTM para identificar a causa raiz.
+                </p>
+                <code>models/tep_autoencoder.keras</code>
+            </div>
+
+            <div class="card">
+                <span class="tag rl">Controle Autônomo</span>
+                <h3>Agente PPO</h3>
+                <p>Piloto automático treinado via <strong>Reinforcement Learning</strong>. Atua sobre 11 válvulas de
+                    controle para estabilizar o processo e mitigar falhas, garantindo a segurança operacional.</p>
+                <code>models/PPO/best_model.zip</code>
+            </div>
+
+            <div class="card">
+                <span class="tag rag">IA Generativa</span>
+                <h3>Explainable AI (RAG)</h3>
+                <p>Sistema RAG que traduz códigos de erro em relatórios técnicos. Consulta manuais no
+                    <strong>ChromaDB</strong> e usa o <strong>Google Gemini</strong> para orientar o operador com ações
+                    corretivas.</p>
+                <code>rag_agent.py</code>
+            </div>
+
+            <div class="card">
+                <span class="tag int">Frontend</span>
+                <h3>Dashboard Streamlit</h3>
+                <p>Interface de comando e controle. Permite visualizar KPIs em tempo real, injetar falhas para testes e
+                    receber diagnósticos da IA.</p>
+                <code>dashboard.py</code>
+            </div>
+
+            <div class="card">
+                <span class="tag int">Backend</span>
+                <h3>Orquestrador</h3>
+                <p>Núcleo do sistema (`tep_system.py`) que integra o ciclo de sensoriamento, detecção, decisão e
+                    explicação (Sense-Think-Act-Explain).</p>
+                <code>tep_system.py</code>
+            </div>
+
+        </div>
+
+    </div>
+
+    <footer>
+        <p>TEP-Sentinel Project &copy; 2026</p>
+    </footer>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            mermaid.initialize({
+                startOnLoad: true,
+                securityLevel: 'loose',
+            });
+        });
+    </script>
+</body>
+
+</html>

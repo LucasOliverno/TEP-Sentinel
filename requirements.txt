@@ -1,0 +1,16 @@
+streamlit
+tensorflow
+stable-baselines3[extra]
+langchain
+langchain-community
+langchain-chroma
+langchain-google-genai
+chromadb
+python-dotenv
+google-generativeai
+gymnasium
+pandas
+numpy
+plotly
+scikit-learn
+pyreadr
