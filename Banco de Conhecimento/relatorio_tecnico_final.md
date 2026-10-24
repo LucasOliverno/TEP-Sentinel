@@ -46,7 +46,7 @@ O sistema opera em um ciclo fechado (Closed-Loop) gerenciado pelo Orquestrador (
 *   **Ambiente**: `envs/tep_env.py`
     *   Utiliza um *Surrogate Model* (LSTM) para simular a física do TEP.
         > **Conceito**: *LSTM (Long Short-Term Memory)* é uma arquitetura de rede neural recorrente capaz de aprender dependências de longo prazo em séries temporais, ideal para modelar a dinâmica lenta de processos químicos.
-    *   Possui **Camada de Segurança** (Safety Layer) que penaliza ações perigosas.
+    *   Encerra o episódio com penalidade se qualquer variável passar de 10σ. Não existe camada de segurança em produção; o RL é só uma demonstração no modelo substituto.
 *   **Agente**: PPO (Proximal Policy Optimization).
     > **Conceito**: *PPO* é um algoritmo de Reinforcement Learning de última geração (estado da arte) que equilibra a exploração do ambiente com a estabilidade do aprendizado, evitando mudanças drásticas na política de controle.
     *   *Arquivo*: `models/PPO/best_model.zip`
@@ -82,7 +82,7 @@ TEP-Sentinel/
 ├── envs/
 │   └── tep_env.py              # Ambiente Gym (Simulador)
 ├── models/                     # Pesos treinados (.keras, .zip, .pkl)
-├── processed_data/             # Scalers e dados processados
+├── processed_data/             # Janelas (.npy) geradas por data_processor.py (não versionado)
 ├── tep_system.py               # <--- CÉREBRO CENTRAL (Orquestrador)
 ├── dashboard.py                # <--- INTERFACE (Streamlit)
 ├── rag_agent.py                # Módulo de Consulta ao LLM

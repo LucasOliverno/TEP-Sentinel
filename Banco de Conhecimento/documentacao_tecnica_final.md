@@ -11,21 +11,13 @@
 
 Nesta fase final de estabilização, foram realizadas atualizações críticas para garantir a robustez do sistema, eliminando falsos positivos e garantindo que a IA Explicável (RAG) funcione perfeitamente.
 
-### 1.1. Estabilização da Simulação (Warm-up & Calibration)
-*   **Problema:** O início da simulação apresentava erros falsos (MSE ~15) devido à falta de histórico para os modelos temporais (LSTM) e ao desvio natural do "Gêmeo Digital".
-*   **Solução (Warm-up):** Implementamos uma fase de aquecimento de **50 passos**. Durante este período, o sistema simula a física mas silencia os alarmes, permitindo que as memórias dos modelos se estabilizem.
-*   **Solução (Calibragem):** Criamos um script (`calibrate_threshold.py`) que mediu o erro natural do modelo substituto em estado estacionário (~20.5) e ajustou o limiar de alerta para **30.7**. Isso eliminou 100% dos falsos positivos.
+### 1.1. Alarme com debounce
+*   O alarme só dispara após 3 amostras seguidas acima do limiar e só limpa após 10 normais (`fdd.AlarmFilter`).
+*   O limiar vem de `calibrate_threshold.py`, em runs normais retidas. O aquecimento é o preenchimento real da janela de 100 amostras. A v1 usava ruído sintético e um limiar calibrado no substituto.
 
-### 1.2. Injeção de Falhas Persistente ("Modo Marreta")
-*   **Problema:** As falhas injetadas anteriormente eram "pulsos" únicos que o sistema corrigia rapidamente, não gerando alarmes sustentados.
-*   **Solução:** Reescrevemos a lógica de injeção (`_apply_fault_physics`) para aplicar a falha **a cada passo de tempo**.
-*   **Magnitude:** Aumentamos drasticamente a intensidade das falhas (de 5 sigmas para 50 sigmas) para garantir que a anomalia seja impossível de ignorar, simulando catástrofes reais (ex: perda total de vazão ou vácuo no reator).
-
-### 1.3. IA Explicável (RAG) Restaurada
-*   **Atualização de SDK:** Migramos da biblioteca descontinuada `google.generativeai` para o padrão moderno `langchain-google-genai`.
-*   **Diagnóstico Visual:** O Dashboard agora exibe estados claros: "Analisando..." (Amarelo) -> "Relatório" (Expansível) ou "Erro" (Vermelho), eliminando a incerteza do usuário.
-
----
+### 1.2. Falhas reais em vez de injeção sintética
+*   O painel faz **replay** de runs reais do conjunto de teste (as 20 IDV). A v1 sobrescrevia sensores com constantes (até −50σ), o que testava pouco.
+*   Resta um *overlay* sintético de offsets, rotulado como demonstração.
 
 ## 2. Da Simulação à Realidade: Implementação na Indústria
 

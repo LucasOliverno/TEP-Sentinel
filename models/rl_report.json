@@ -1,0 +1,13 @@
+{
+  "baseline_zero_action": {
+    "mean_reward": -503.0989570248872,
+    "final_xmeas_mse": 3.2232571244239807,
+    "blowups": 0
+  },
+  "ppo_best": {
+    "mean_reward": -105.55852878222242,
+    "final_xmeas_mse": 0.6179763242602349,
+    "blowups": 0
+  },
+  "timesteps": 100000
+}

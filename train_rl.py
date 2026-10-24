@@ -1,42 +1,62 @@
-import gymnasium as gym
+"""Train a PPO agent on the surrogate environment and compare it with a do-nothing baseline.
+
+The best checkpoint (by evaluation reward) is saved to models/PPO/best_model.zip, which is the
+file TEPSentinelSystem loads.
+"""
+import argparse
+
+import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
+
+from common import log, save_json, set_seed, setup_logging
+from config import MODELS_DIR, RL_BEST_PATH, ROOT
 from envs.tep_env import TEPEnv
-import os
-import time
 
-# Create log dir
-MODELS_DIR = "models/PPO"
-LOG_DIR = "logs"
-os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(LOG_DIR, exist_ok=True)
+LOG_DIR = ROOT / "logs"
 
-def train():
-    # Create Environment
-    # Wrap in Monitor to log stats (reward per episode) for Tensorboard
-    env = Monitor(TEPEnv(), LOG_DIR)
-    
-    # Create Model
-    # MlpPolicy because our state is a vector (52,), not an image
-    # verbose=1 to see progress
-    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=LOG_DIR)
 
-    # Train
-    TIMESTEPS = 20000 
-    checkpoint_callback = CheckpointCallback(save_freq=5000, save_path=MODELS_DIR, name_prefix="tep_ppo")
+def evaluate(policy, env, episodes=20, seed=1000):
+    """Mean cumulative reward and mean final XMEAS MSE over fixed-seed episodes."""
+    rewards, finals, blowups = [], [], 0
+    for ep in range(episodes):
+        obs, _ = env.reset(seed=seed + ep)
+        total, done, info = 0.0, False, {}
+        while not done:
+            obs, r, term, trunc, info = env.step(policy(obs))
+            total += r
+            done = term or trunc
+            blowups += int(term)
+        rewards.append(total)
+        finals.append(info["xmeas_mse"])
+    return {"mean_reward": float(np.mean(rewards)), "final_xmeas_mse": float(np.mean(finals)), "blowups": blowups}
 
-    print(f"Starting PPO Training for {TIMESTEPS} timesteps...")
-    start_time = time.time()
-    
-    model.learn(total_timesteps=TIMESTEPS, callback=checkpoint_callback)
-    
-    print(f"Training Complete in {time.time() - start_time:.2f}s.")
-    
-    # Save Final Model
-    final_path = f"{MODELS_DIR}/tep_final_ppo"
-    model.save(final_path)
-    print(f"Model saved to {final_path}")
+
+def train(timesteps: int):
+    setup_logging()
+    set_seed()
+    RL_BEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(exist_ok=True)
+    env = Monitor(TEPEnv(), str(LOG_DIR))
+    eval_env = Monitor(TEPEnv())
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log=str(LOG_DIR), seed=42)
+    cb = EvalCallback(eval_env, best_model_save_path=str(RL_BEST_PATH.parent), log_path=str(LOG_DIR),
+                      eval_freq=5000, n_eval_episodes=5, deterministic=True)
+    model.learn(total_timesteps=timesteps, callback=cb)
+
+    best = PPO.load(RL_BEST_PATH)
+    zeros = np.zeros(11, dtype=np.float32)
+    report = {
+        "baseline_zero_action": evaluate(lambda o: zeros, TEPEnv()),
+        "ppo_best": evaluate(lambda o: best.predict(o, deterministic=True)[0], TEPEnv()),
+        "timesteps": timesteps,
+    }
+    save_json(MODELS_DIR / "rl_report.json", report)
+    log.info("RL report: %s", report)
+
 
 if __name__ == "__main__":
-    train()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--timesteps", type=int, default=100_000)
+    train(ap.parse_args().timesteps)

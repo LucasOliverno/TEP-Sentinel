@@ -17,7 +17,7 @@ O projeto **TEP-Sentinel** não é apenas um exercício acadêmico de aplicaçã
 
 **O Valor do TEP-Sentinel:**
 *   **Controle Adaptativo:** O agente de *Reinforcement Learning* (PPO) aprende a "pilotar" a planta em cenários diversos, adaptando-se a perturbações que desestabilizariam um PID comum.
-*   **Segurança Incorporada:** A *Safety Layer* garante que, mesmo buscando eficiência, o sistema nunca violará restrições físicas críticas.
+*   **Segurança:** o RL é uma demonstração em modelo substituto e não deve atuar numa planta real sem validação e camadas de proteção independentes (SIS).
 *   **Impacto:** Operação mais estável, menor variabilidade no produto final e economia de energia/recursos.
 
 ### 3. Democratização do Conhecimento Técnico (RAG)

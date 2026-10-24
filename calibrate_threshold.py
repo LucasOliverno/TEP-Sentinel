@@ -1,60 +1,57 @@
-import numpy as np
+"""Calibrate the alarm threshold on HELD-OUT fault-free training runs, at alarm level.
+
+A per-window percentile is too optimistic for a monitor that scores every sample: consecutive
+windows are highly correlated. This script streams the held-out normal runs window by window,
+applies the same debounce as the live system and picks the smallest threshold whose number of
+confirmed false-alarm episodes stays under a budget.
+"""
+import argparse
+
 import joblib
-import os
-from tep_system import TEPSentinelSystem
+import numpy as np
 
-def calibrate():
-    print("----------------------------------------------------------------")
-    print("  TEP-Sentinel Threshold Calibrator")
-    print("----------------------------------------------------------------")
-    
-    # Initialize System
-    system = TEPSentinelSystem()
-    
-    print("\nRunning warm-up (50 steps)...")
-    # Warmup is handled internally by step() returning 'WARMUP' status but we need to run it.
-    for _ in range(50):
-        system.step()
-        
-    print("Running Calibration (200 steps)...")
-    mse_values = []
-    
-    for i in range(200):
-        # Default action (steady state)
-        outputs = system.step()
-        # We need the RAW MSE from the autoencoder, even if system says 'NORMAL'
-        # tep_system.monitor() returns is_fault, mse
-        # But step() returns results. Let's rely on outputs['mse']
-        
-        mse = outputs['mse']
-        mse_values.append(mse)
-        
-        if i % 20 == 0:
-            print(f"Step {i}: MSE={mse:.4f}")
+from common import log, setup_logging
+from config import FEATURE_COLS, THRESHOLD_PATH, WINDOW_SIZE, data_path
+from data_processor import VAL_RUN_MOD, iter_runs
+from evaluate import score_mse
+from fdd import Models
 
-    mse_values = np.array(mse_values)
-    min_mse = np.min(mse_values)
-    max_mse = np.max(mse_values)
-    mean_mse = np.mean(mse_values)
-    
-    # Calculate new threshold (e.g., Max observed + 20% margin or 99th percentile)
-    # Using specific percentile might be safer if there are outliers
-    new_threshold = np.percentile(mse_values, 99) * 1.5 # Add safety margin
-    
-    print("\n----------------------------------------------------------------")
-    print(f"Optimization Results:")
-    print(f"Min MSE: {min_mse:.4f}")
-    print(f"Max MSE: {max_mse:.4f}")
-    print(f"Mean MSE: {mean_mse:.4f}")
-    print(f"Current Threshold: {system.threshold:.4f}")
-    print(f"Proposed Threshold: {new_threshold:.4f}")
-    print("----------------------------------------------------------------")
-    
-    # Save
-    save_path = "models/tep_threshold.pkl"
-    print(f"Saving new threshold to {save_path}...")
-    joblib.dump(new_threshold, save_path)
-    print("Done. Restart the Dashboard to apply.")
+
+def count_episodes(mse: np.ndarray, threshold: float, confirm: int) -> int:
+    """Number of alarm episodes: streaks of >= confirm consecutive exceedances."""
+    flags = np.concatenate([[False], mse > threshold, [False]]).astype(np.int8)
+    starts, ends = np.where(np.diff(flags) == 1)[0], np.where(np.diff(flags) == -1)[0]
+    return int(np.sum((ends - starts) >= confirm))
+
+
+def calibrate(max_episodes_per_1000_runs_samples: float, confirm: int, stride: int):
+    models = Models.load(load_rl=False)
+    per_run, total_samples = [], 0
+    for _, run, g in iter_runs(data_path("train", "normal")):
+        if run % VAL_RUN_MOD:
+            continue
+        data = models.scaler.transform(g[FEATURE_COLS].to_numpy(np.float64)).astype(np.float32)
+        per_run.append(score_mse(models, data, stride)[1])
+        total_samples += len(data) - WINDOW_SIZE + 1
+    budget = max_episodes_per_1000_runs_samples * total_samples / 1000.0
+    all_mse = np.concatenate(per_run)
+    for thr in np.unique(np.quantile(all_mse, np.linspace(0.90, 0.99999, 400))):
+        episodes = sum(count_episodes(m, thr, max(1, confirm // stride)) for m in per_run)
+        if episodes <= budget:
+            log.info("held-out runs=%d samples=%d budget=%.2f episodes -> threshold %.4f (%d episodes)",
+                     len(per_run), total_samples, budget, thr, episodes)
+            return float(thr)
+    raise RuntimeError("no threshold satisfies the budget")
+
 
 if __name__ == "__main__":
-    calibrate()
+    setup_logging()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--budget", type=float, default=0.05,
+                    help="allowed false-alarm episodes per 1000 monitored samples (default 0.05 ~ 1 per 20k)")
+    ap.add_argument("--confirm", type=int, default=3)
+    ap.add_argument("--stride", type=int, default=1)
+    a = ap.parse_args()
+    thr = calibrate(a.budget, a.confirm, a.stride)
+    joblib.dump(thr, THRESHOLD_PATH)
+    log.info("saved %s", THRESHOLD_PATH)

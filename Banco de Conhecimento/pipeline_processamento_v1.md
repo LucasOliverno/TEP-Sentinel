@@ -1,41 +1,21 @@
 # Pipeline de Processamento de Dados (Fase 2)
 
-## Visão Geral
-Este documento descreve como os dados brutos (Parquet) foram transformados em Tensores prontos para o treinamento de Redes Neurais (CNN-LSTM/Autoencoders).
+Código: `data_processor.py` · Dados: `python scripts/download_data.py` (Harvard Dataverse, Rieth et al. 2017).
 
-## Estratégia Adotada
+## Decisões
+1.  **Scaler**: `StandardScaler` ajustado **só** em `FaultFree_Training`, salvo em `models/tep_scaler.pkl` (versionado junto aos modelos).
+2.  **Janelas** de 100 amostras, **por run**: nunca misturam `faultNumber`/`simulationRun`.
+3.  **Rótulos**: 0 antes do início da falha (amostra 20 no treino, 160 no teste), `faultNumber` depois. O rótulo da janela é o do último passo.
+4.  **Split por `simulationRun`**: `run % 5 == 0` é validação. Janelas sobrepostas do mesmo run ficam no mesmo lado.
+5.  **Memória**: leitura falha por falha (filtros do pyarrow) e saída em `.npy` pré-alocado, lido com `mmap`.
 
-### 1. Prevenção de Data Leakage
-*   **Scaler**: `StandardScaler` (média 0, desvio padrão 1).
-*   **Fit**: O scaler foi treinado **EXCLUSIVAMENTE** nos dados `FaultFree_Training`.
-    *   Isso garante que o modelo não conheça a estatística das falhas ou do conjunto de teste antecipadamente.
-*   **Persistência**: Salvo em `processed_data/tep_scaler.pkl`.
+## Saída (`processed_data/{train,test}/`)
+`X.npy` (N,100,52 float32), `y.npy`, `run.npy`, `fault.npy`, `meta.json`.
 
-### 2. Janelamento (Time Series)
-Os dados industriais possuem inércia. Uma amostra isolada ($t$) não contem informação suficiente. Usamos janelas deslizantes (Sliding Windows).
+Com os strides padrão do código: treino 20 → 220.500 janelas; teste 50 → 189.000 janelas.
 
-| Configuração | Treino (Train) | Teste (Test) | Motivo |
-|---|---|---|---|
-| **Janela ($T$)** | 100 amostras | 100 amostras | Captura ~3 mins de histórico. |
-| **Stride (Passo)** | 10 | 100 | **Train**: Stride pequeno cria overlap (Data Augmentation) para mais dados.<br>**Test**: Stride = Janela (Sem overlap) para avaliação justa e economia de memória. |
-
-### 3. Tensores Gerados
-Os arquivos finais em `processed_data/` são arquivos comprimidos Numpy (`.npz`):
-
-*   **tep_train.npz**:
-    *   **X**: `(524,991, 100, 52)` -> 525k amostras de treino.
-    *   **y**: Etiquetas de falha (0 = Normal, 1-20 = Falhas).
-*   **tep_test.npz**:
-    *   **X**: `(100,800, 100, 52)` -> 100k amostras de teste.
-    *   **y**: Etiquetas correspondentes.
-
-## Como carregar?
 ```python
-import numpy as np
-data = np.load('processed_data/tep_train.npz')
-X_train = data['X']
-y_train = data['y']
+from data_processor import load_split, run_split_masks
+X, y, run, fault = load_split("train")      # X é memmap
+train_mask, val_mask = run_split_masks(run)
 ```
-
-## Próximos Passos (Fase 3)
-*   Treinar Autoencoder para detecção de anomalias (usando apenas dados normais do `tep_train.npz` onde `y=0`).

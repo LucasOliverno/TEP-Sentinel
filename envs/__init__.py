@@ -1,5 +1,8 @@
 from gymnasium.envs.registration import register
+
 from .tep_env import TEPEnv
+
+__all__ = ["TEPEnv"]
 
 register(
     id='TEP-v0',

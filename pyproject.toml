@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 120
+extend-exclude = ["processed_data", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

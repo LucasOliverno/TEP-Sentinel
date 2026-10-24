@@ -1,127 +1,139 @@
-import pandas as pd
-import numpy as np
-import os
-from sklearn.preprocessing import StandardScaler
-import joblib
+"""Data pipeline: Parquet -> scaled sliding windows saved as memory-mappable .npy files.
+
+Differences from the first version:
+  * windows never cross a (faultNumber, simulationRun) boundary;
+  * samples before the fault onset are labelled 0 (the process is still normal there);
+  * every window keeps its simulationRun so train/validation can be split by run
+    (overlapping windows from the same run must not land on both sides of the split);
+  * data is streamed one fault at a time (pyarrow filters) to keep memory bounded.
+"""
+import argparse
 import gc
+import json
 
-class TEPProcessor:
-    def __init__(self, window_size=100, stride=10):
-        self.window_size = window_size
-        self.stride = stride
-        self.scaler = StandardScaler()
-        self.output_dir = "processed_data"
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-    def fit_scaler(self, df_normal):
-        """Fits the scaler ONLY on normal data to correct data leakage."""
-        print("Fitting scaler on Normal data...")
-        # Select only process variables (exclude metadata)
-        cols = [c for c in df_normal.columns if 'xmeas' in c or 'xmv' in c]
-        self.feature_cols = cols
-        
-        self.scaler.fit(df_normal[cols])
-        print("Scaler fitted.")
-        
-        # Save scaler for future inference
-        joblib.dump(self.scaler, f"{self.output_dir}/tep_scaler.pkl")
-        print(f"Scaler saved to {self.output_dir}/tep_scaler.pkl")
-        
-    def normalize(self, df):
-        """Applies normalization using the fitted scaler."""
-        df_scaled = df.copy()
-        df_scaled[self.feature_cols] = self.scaler.transform(df[self.feature_cols])
-        return df_scaled
+import joblib
+import numpy as np
+import pyarrow.parquet as pq
+from sklearn.preprocessing import StandardScaler
 
-    def create_windows(self, df, label_col='faultNumber'):
-        """
-        Creates 3D tensors (Samples, Window, Features) using pre-allocation.
-        """
-        data = df[self.feature_cols].values.astype(np.float32)
-        labels = df[label_col].values
-        
-        num_samples = (len(df) - self.window_size) // self.stride + 1
-        print(f"Creating {num_samples} windows (Size={self.window_size}, Stride={self.stride})...")
-        
-        # Pre-allocate memory
-        X = np.empty((num_samples, self.window_size, len(self.feature_cols)), dtype=np.float32)
-        y = np.empty((num_samples,), dtype=np.int8)
-        
-        for i in range(num_samples):
-            start = i * self.stride
-            end = start + self.window_size
-            
-            X[i] = data[start:end]
-            y[i] = labels[end - 1] # Label of the last step
-            
-        return X, y
+from config import FAULT_ONSET, FEATURE_COLS, N_FEATURES, PROCESSED_DIR, SCALER_PATH, WINDOW_SIZE, data_path
 
-    def process_pipeline(self):
-        # 1. Fit Scaler First (Needs Normal Train Data)
-        print("Loading Train Normal for Scaler fitting...")
-        df_train_normal = pd.read_parquet("TEP_FaultFree_Training_fault_free_training.parquet")
-        self.fit_scaler(df_train_normal)
-        del df_train_normal
+VAL_RUN_MOD = 5  # simulationRun % 5 == 0 -> validation (20 %)
+
+
+def fit_scaler(normal_parquet=None, save_path=SCALER_PATH):
+    """Fit the StandardScaler ONLY on fault-free training data."""
+    path = normal_parquet or data_path("train", "normal")
+    print(f"Fitting scaler on {path} ...")
+    df = pq.read_table(path, columns=FEATURE_COLS).to_pandas()
+    scaler = StandardScaler().fit(df[FEATURE_COLS].to_numpy(dtype=np.float64))
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(scaler, save_path)
+    print(f"Scaler saved to {save_path}")
+    return scaler
+
+
+def label_run(fault: int, n_samples: int, onset: int) -> np.ndarray:
+    """Per-sample labels: 0 before the fault onset, `fault` afterwards (sample index is 0-based)."""
+    labels = np.zeros(n_samples, dtype=np.int8)
+    if fault > 0:
+        labels[onset:] = fault
+    return labels
+
+
+def window_run(data: np.ndarray, labels: np.ndarray, window: int, stride: int):
+    """Sliding windows over ONE run. Label = label of the last step in the window."""
+    n = (len(data) - window) // stride + 1
+    if n <= 0:
+        return np.empty((0, window, data.shape[1]), np.float32), np.empty(0, np.int8)
+    ends = np.arange(n) * stride + window  # exclusive end indices
+    idx = (ends - window)[:, None] + np.arange(window)[None, :]
+    return data[idx].astype(np.float32), labels[ends - 1]
+
+
+def iter_runs(parquet_path):
+    """Yield (fault, run, DataFrame) streaming one faultNumber at a time."""
+    faults = sorted({int(f) for f in pq.read_table(parquet_path, columns=["faultNumber"])
+                     .column("faultNumber").unique().to_pylist()})
+    cols = ["faultNumber", "simulationRun", "sample"] + FEATURE_COLS
+    for fault in faults:
+        df = pq.read_table(parquet_path, columns=cols, filters=[("faultNumber", "==", fault)]).to_pandas()
+        df.sort_values(["simulationRun", "sample"], inplace=True)
+        for run, g in df.groupby("simulationRun", sort=True):
+            yield fault, int(run), g
+        del df
         gc.collect()
-        
-        # 2. Sequential Processing
-        # Configuration for each split
-        # We perform file loading INSIDE the loop to save memory
-        configs = [
-            {
-                'name': 'train',
-                'files': ["TEP_FaultFree_Training_fault_free_training.parquet", 
-                          "TEP_Faulty_Training_faulty_training.parquet"],
-                'stride': 10
-            },
-            {
-                'name': 'test',
-                'files': ["TEP_FaultFree_Testing_fault_free_testing.parquet", 
-                          "TEP_Faulty_Testing_faulty_testing.parquet"],
-                'stride': 100
-            }
-        ]
-        
-        for config in configs:
-            name = config['name']
-            print(f"--- Processing {name} set (Stride={config['stride']}) ---")
-            
-            dfs = []
-            for f in config['files']:
-                print(f"Loading {f}...")
-                dfs.append(pd.read_parquet(f))
-            
-            df = pd.concat(dfs)
-            del dfs
-            gc.collect()
-            
-            print("Normalizing...")
-            # Normalize in-place or carefully
-            df_norm = self.normalize(df)
-            del df
-            gc.collect()
-            
-            # Update stride temporarily
-            original_stride = self.stride
-            self.stride = config['stride']
-            
-            try:
-                X, y = self.create_windows(df_norm)
-                print(f"{name} shape: X={X.shape}, y={y.shape}")
-                
-                # Save
-                save_path = f"{self.output_dir}/tep_{name}.npz"
-                np.savez_compressed(save_path, X=X, y=y)
-                print(f"Saved to {save_path}")
-                
-                del X, y, df_norm
-                gc.collect()
-                
-            except MemoryError:
-                print(f"CRITICAL: MemoryError processing {name}.")
-            finally:
-                self.stride = original_stride # Restore
+
+
+def process_split(split: str, stride: int, scaler, window: int = WINDOW_SIZE, out_dir=PROCESSED_DIR):
+    """Create X.npy / y.npy / run.npy / fault.npy for a split ('train' or 'test')."""
+    onset = FAULT_ONSET[split]
+    out = out_dir / split
+    out.mkdir(parents=True, exist_ok=True)
+    files = [data_path(split, k) for k in ("normal", "faulty") if data_path(split, k).exists()]
+    if not files:
+        raise FileNotFoundError(f"No {split} parquet found. Run scripts/download_data.py")
+
+    # Pass 1: count windows so the output can be pre-allocated on disk.
+    total, per_file = 0, {}
+    for f in files:
+        meta = pq.read_table(f, columns=["faultNumber", "simulationRun"]).to_pandas()
+        counts = meta.groupby(["faultNumber", "simulationRun"]).size()
+        n = int(((counts - window) // stride + 1).clip(lower=0).sum())
+        per_file[f], total = n, total + n
+    print(f"[{split}] {total:,} windows (stride={stride}, window={window})")
+
+    X = np.lib.format.open_memmap(out / "X.npy", mode="w+", dtype=np.float32, shape=(total, window, N_FEATURES))
+    y = np.empty(total, np.int8)
+    run_ids = np.empty(total, np.int16)
+    fault_ids = np.empty(total, np.int8)
+
+    pos = 0
+    for f in files:
+        print(f"  reading {f.name}")
+        for fault, run, g in iter_runs(f):
+            data = scaler.transform(g[FEATURE_COLS].to_numpy(dtype=np.float64)).astype(np.float32)
+            labels = label_run(fault, len(data), onset)
+            xw, yw = window_run(data, labels, window, stride)
+            k = len(xw)
+            X[pos:pos + k] = xw
+            y[pos:pos + k] = yw
+            run_ids[pos:pos + k] = run
+            fault_ids[pos:pos + k] = fault
+            pos += k
+    assert pos == total, (pos, total)
+    X.flush()
+    np.save(out / "y.npy", y)
+    np.save(out / "run.npy", run_ids)
+    np.save(out / "fault.npy", fault_ids)
+    (out / "meta.json").write_text(json.dumps(
+        {"windows": total, "stride": stride, "window": window, "onset": onset, "val_run_mod": VAL_RUN_MOD}))
+    print(f"[{split}] saved to {out}")
+
+
+def load_split(split: str, mmap: bool = True, out_dir=PROCESSED_DIR):
+    d = out_dir / split
+    X = np.load(d / "X.npy", mmap_mode="r" if mmap else None)
+    return X, np.load(d / "y.npy"), np.load(d / "run.npy"), np.load(d / "fault.npy")
+
+
+def run_split_masks(run_ids: np.ndarray):
+    """Boolean masks (train, val) split by simulationRun."""
+    val = (run_ids % VAL_RUN_MOD) == 0
+    return ~val, val
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--train-stride", type=int, default=50)
+    ap.add_argument("--test-stride", type=int, default=50)
+    ap.add_argument("--refit-scaler", action="store_true")
+    args = ap.parse_args()
+
+    scaler = joblib.load(SCALER_PATH) if SCALER_PATH.exists() and not args.refit_scaler else fit_scaler()
+    process_split("train", args.train_stride, scaler)
+    process_split("test", args.test_stride, scaler)
+
 
 if __name__ == "__main__":
-    processor = TEPProcessor(window_size=100)
-    processor.process_pipeline()
+    main()
